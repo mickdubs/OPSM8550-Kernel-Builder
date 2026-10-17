@@ -28,7 +28,7 @@ resolve_root_solution "$INPUT_ROOT_SOLUTION"
 case "$INPUT_ROM_GKI_MODULE_COMPAT" in
   "Strict GKI module checks (default)") ROM_GKI_MODULE_COMPAT=0 ;;
   "Use existing ROM system_dlkm modules (experimental)")
-    if [[ "$PROFILE_ID" != sm8650-oneplus12-crdroid ]]; then
+        if [[ "$PROFILE_ID" != sm8650-oneplus12-crdroid && "$PROFILE_ID" != sm8650-oneplus12-lineage ]]; then
       echo "::error::ROM GKI module compatibility mode is currently validated only for the OnePlus 12 crDroid profile."
       exit 1
     fi
