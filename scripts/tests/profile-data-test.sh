@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/../lib/profile-data.sh"
 # shellcheck source=../lib/git-helpers.sh
 . "${SCRIPT_DIR}/../lib/git-helpers.sh"
+# shellcheck source=../lib/finasu-release.sh
+. "${SCRIPT_DIR}/../lib/finasu-release.sh"
 # shellcheck source=../lib/anykernel-helpers.sh
 . "${SCRIPT_DIR}/../lib/anykernel-helpers.sh"
 # shellcheck source=../lib/nomount-setup.sh
@@ -184,16 +186,54 @@ assert_eq "https://github.com/osm1019/android_kernel_oneplus_sm8550-modules.git"
 assert_eq "los" "$MODULES_BRANCH_OVERRIDE" "LunarisOS modules branch"
 assert_eq "lunarisos" "$SOURCE_SLUG" "LunarisOS source slug"
 
-resolve_root_solution "ReSukiSU + susfs"
-assert_eq "ReSukiSU-with-susfs" "$KSU_TYPE" "root mapping"
+resolve_root_solution "BakaSU + SUSFS"
+assert_eq "BakaSU-with-susfs" "$KSU_TYPE" "root mapping"
+for finasu_choice in 'FinaSU (experimental)' 'FinaSU + SUSFS (experimental)' \
+  'FinaSU + NoMount (experimental)' 'FinaSU + SUSFS + NoMount (experimental)'; do
+  resolve_root_solution "$finasu_choice"
+  grep -Fxq "          - $finasu_choice" "$WORKFLOW_FILE" \
+    || fail "workflow is missing $finasu_choice"
+  (
+    # shellcheck source=../lib/ksu-setup.sh
+    . "$KSU_SETUP_SCRIPT"
+    KSU_COMMIT=3333333333333333333333333333333333333333
+    setup_kernelsu_repo() {
+      assert_eq LyraVoid "$1" "FinaSU checkout owner"
+      assert_eq FinaSU "$2" "FinaSU checkout repository"
+      assert_eq "$KSU_COMMIT" "$3" "FinaSU checkout exact commit"
+    }
+    install_ksu_variant "$KSU_TYPE"
+  )
+done
+for bakasu_suffix in "" " + SUSFS" " + SUSFS + NoMount (experimental)" " + SUSFS + ZeroMount (experimental)"; do
+  resolve_root_solution "BakaSU${bakasu_suffix}"
+  bakasu_type="$KSU_TYPE"
+  grep -Fxq "          - BakaSU${bakasu_suffix}" "$WORKFLOW_FILE" \
+    || fail "workflow is missing BakaSU${bakasu_suffix}"
+  legacy_suffix="$bakasu_suffix"
+  [[ "$legacy_suffix" != " + SUSFS" ]] || legacy_suffix=" + susfs"
+  resolve_root_solution "ReSukiSU${legacy_suffix}"
+  assert_eq "$bakasu_type" "$KSU_TYPE" "legacy ReSukiSU${legacy_suffix} mapping"
+  (
+    # shellcheck source=../lib/ksu-setup.sh
+    . "$KSU_SETUP_SCRIPT"
+    KSU_COMMIT=1111111111111111111111111111111111111111
+    setup_kernelsu_repo() {
+      assert_eq "Baka-SU" "$1" "BakaSU checkout owner"
+      assert_eq "BakaSU" "$2" "BakaSU checkout repository"
+      assert_eq "$KSU_COMMIT" "$3" "BakaSU checkout exact commit"
+    }
+    install_ksu_variant "$KSU_TYPE"
+  )
+done
 resolve_root_solution "KernelSU-Next + SUSFS"
 assert_eq "KernelSU-Next-with-susfs" "$KSU_TYPE" "KernelSU-Next SUSFS root mapping"
 resolve_root_solution "KernelSU-Next + SUSFS + NoMount (experimental)"
 assert_eq "KernelSU-Next-with-susfs-nomount" "$KSU_TYPE" "KernelSU-Next NoMount root mapping"
 resolve_root_solution "KernelSU-Next + SUSFS + ZeroMount (experimental)"
 assert_eq "KernelSU-Next-with-susfs-zeromount" "$KSU_TYPE" "KernelSU-Next ZeroMount root mapping"
-resolve_root_solution "ReSukiSU + SUSFS + NoMount (experimental)"
-assert_eq "ReSukiSU-with-susfs-nomount" "$KSU_TYPE" "NoMount root mapping"
+resolve_root_solution "BakaSU + SUSFS + NoMount (experimental)"
+assert_eq "BakaSU-with-susfs-nomount" "$KSU_TYPE" "NoMount root mapping"
 resolve_root_solution "SukiSU Ultra + KPM (experimental)"
 assert_eq "SukiSU-Ultra-with-KPM" "$KSU_TYPE" "KPM root mapping"
 resolve_root_solution "SukiSU Ultra + SUSFS + KPM (experimental)"
@@ -202,9 +242,9 @@ resolve_root_solution "SukiSU Ultra + SUSFS + NoMount + KPM (experimental)"
 assert_eq "SukiSU-Ultra-with-susfs-nomount-KPM" "$KSU_TYPE" "SukiSU SUSFS/NoMount/KPM root mapping"
 resolve_root_solution "SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)"
 assert_eq "SukiSU-Ultra-with-susfs-zeromount-KPM" "$KSU_TYPE" "SukiSU SUSFS/ZeroMount/KPM root mapping"
-resolve_root_solution "ReSukiSU + SUSFS + ZeroMount (experimental)"
-assert_eq "ReSukiSU-with-susfs-zeromount" "$KSU_TYPE" "ReSukiSU ZeroMount root mapping"
-grep -Fq -- '- ReSukiSU + SUSFS + NoMount (experimental)' "$WORKFLOW_FILE" \
+resolve_root_solution "BakaSU + SUSFS + ZeroMount (experimental)"
+assert_eq "BakaSU-with-susfs-zeromount" "$KSU_TYPE" "BakaSU ZeroMount root mapping"
+grep -Fq -- '- BakaSU + SUSFS + NoMount (experimental)' "$WORKFLOW_FILE" \
   || fail "workflow is missing the NoMount root option"
 grep -Fq -- '- KernelSU-Next + SUSFS' "$WORKFLOW_FILE" \
   || fail "workflow is missing the KernelSU-Next SUSFS root option"
@@ -216,11 +256,11 @@ grep -Fq -- '- Build all 3 ZeroMount variants (batch)' "$WORKFLOW_FILE" \
   || fail "workflow is missing the three-variant ZeroMount batch option"
 grep -Fq 'name: Build ${{ matrix.root_solution }}' "$WORKFLOW_FILE" \
   || fail "workflow build job does not use the root-solution matrix"
-grep -Fq '"SukiSU Ultra + SUSFS + NoMount + KPM (experimental)","ReSukiSU + SUSFS + NoMount (experimental)","KernelSU-Next + SUSFS + NoMount (experimental)"' "$WORKFLOW_FILE" \
+grep -Fq '"SukiSU Ultra + SUSFS + NoMount + KPM (experimental)","BakaSU + SUSFS + NoMount (experimental)","KernelSU-Next + SUSFS + NoMount (experimental)"' "$WORKFLOW_FILE" \
   || fail "workflow featured SUSFS batch matrix does not contain all three NoMount variants"
-grep -Fq '"SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)","ReSukiSU + SUSFS + ZeroMount (experimental)","KernelSU-Next + SUSFS + ZeroMount (experimental)"' "$WORKFLOW_FILE" \
+grep -Fq '"SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)","BakaSU + SUSFS + ZeroMount (experimental)","KernelSU-Next + SUSFS + ZeroMount (experimental)"' "$WORKFLOW_FILE" \
   || fail "workflow batch matrix does not contain the three ZeroMount variants"
-grep -Fq 'ARTIFACT_NAME="kernel-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${KSU_TYPE}"' "$WORKFLOW_FILE" \
+grep -Fq 'ARTIFACT_NAME="kernel-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${KSU_TYPE}${ANDROID_VARIANT:+-${ANDROID_VARIANT}}"' "$SCRIPT_DIR/../set-build-metadata.sh" \
   || fail "workflow package artifact names must be unique across the batch matrix"
 grep -Fq 'KSU_REPO="https://github.com/pershoot/KernelSU-Next.git"' "$RESOLVER_SCRIPT" \
   || fail "KernelSU-Next SUSFS must resolve the compatible dev-susfs fork"
@@ -242,14 +282,14 @@ grep -Fq -- '- KernelSU-Next + SUSFS + NoMount (experimental)' "$UPSTREAM_HEALTH
   || fail "upstream health is missing KernelSU-Next NoMount"
 grep -Fq -- '- integration: KernelSU-Next + SUSFS + ZeroMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
   || fail "upstream health is missing KernelSU-Next ZeroMount"
-grep -Fq -- '- integration: ReSukiSU + SUSFS + ZeroMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health is missing ReSukiSU ZeroMount"
+grep -Fq -- '- integration: BakaSU + SUSFS + ZeroMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health is missing BakaSU ZeroMount"
 grep -Fq -- '- SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
   || fail "upstream health is missing SukiSU ZeroMount"
 grep -Fq 'SukiSU-Ultra-with-KPM|SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM)' "$RESOLVER_SCRIPT" \
   || fail "resolver does not route all SukiSU presets to SukiSU Ultra"
-grep -Fq 'SUSFS_COMMIT="$(sukisu_compatible_susfs_commit "$SUSFS_REF")"' "$RESOLVER_SCRIPT" \
-  || fail "resolver does not use the SukiSU-compatible SUSFS commit map"
+grep -Fq 'SUSFS_COMMIT="$(su_session_compatible_susfs_commit "$SUSFS_REF")"' "$RESOLVER_SCRIPT" \
+  || fail "resolver does not use the su-session-compatible SUSFS commit map"
 grep -Fq '"SukiSU-Ultra-with-KPM"|"SukiSU-Ultra-with-susfs-KPM"|"SukiSU-Ultra-with-susfs-nomount-KPM"|"SukiSU-Ultra-with-susfs-zeromount-KPM")' "$KSU_SETUP_SCRIPT" \
   || fail "KernelSU setup does not install SukiSU Ultra for all combined presets"
 grep -Fq 'ZEROMOUNT_COMMIT="2978dcad87dc7055e2e4596c603313c553a9a4b4"' "$RESOLVER_SCRIPT" \
@@ -344,20 +384,20 @@ for crdroid_soc in sm7550 sm8550 sm8650; do
   [[ "$(zeromount_patch_sha256 "${SUSFS_REF#gki-}")" =~ ^[0-9a-f]{64}$ ]] \
     || fail "crDroid 13 $crdroid_soc ZeroMount patch mapping"
 done
-assert_eq "2c774fdb4f0aaa743598c1bec787f6c935574ed1" \
-  "$(sukisu_compatible_susfs_commit gki-android13-5.10)" "SukiSU Android 13 5.10 SUSFS pin"
-assert_eq "7af04b08f86a5f811cbea28805f96d52368e005f" \
-  "$(sukisu_compatible_susfs_commit gki-android13-5.15)" "SukiSU Android 13 5.15 SUSFS pin"
-assert_eq "aab99ba7693d94489fd32f1cc4c9d58396fffeee" \
-  "$(sukisu_compatible_susfs_commit gki-android14-5.15)" "SukiSU Android 14 5.15 SUSFS pin"
-assert_eq "6c2b5042ec656cd3ce9ad352a1e226e2e9e26779" \
-  "$(sukisu_compatible_susfs_commit gki-android14-6.1)" "SukiSU Android 14 6.1 SUSFS pin"
-if sukisu_compatible_susfs_commit unsupported >/dev/null 2>&1; then
+assert_eq "7b08b969e3577d282b352a267cb343b02b707d2a" \
+  "$(su_session_compatible_susfs_commit gki-android13-5.10)" "SukiSU Android 13 5.10 SUSFS pin"
+assert_eq "adaef1c599e770707311ad36b015a0de3f30ac28" \
+  "$(su_session_compatible_susfs_commit gki-android13-5.15)" "SukiSU Android 13 5.15 SUSFS pin"
+assert_eq "ffa69590787d097f54cb60ed79fa6fd5e285bb41" \
+  "$(su_session_compatible_susfs_commit gki-android14-5.15)" "SukiSU Android 14 5.15 SUSFS pin"
+assert_eq "2e9f720d3af25e2c6678633cc5be82edae9708b3" \
+  "$(su_session_compatible_susfs_commit gki-android14-6.1)" "SukiSU Android 14 6.1 SUSFS pin"
+if su_session_compatible_susfs_commit unsupported >/dev/null 2>&1; then
   fail "unknown SukiSU SUSFS branches must not silently fall back to HEAD"
 fi
-version_is_at_least 2.2.0 2.2.0 || fail "SUSFS minimum version equality"
-version_is_at_least 2.3.0 2.2.0 || fail "SUSFS newer version acceptance"
-if version_is_at_least 2.1.9 2.2.0; then
+version_is_at_least 2.3.0 2.3.0 || fail "SUSFS minimum version equality"
+version_is_at_least 2.3.1 2.3.0 || fail "SUSFS newer version acceptance"
+if version_is_at_least 2.2.9 2.3.0; then
   fail "SUSFS old version rejection"
 fi
 
@@ -385,6 +425,67 @@ SUSFS_VENDOR_FIXTURE_DIR="$(mktemp -d)"
 RESOLVER_FIXTURE_DIR="$(mktemp -d)"
 trap 'rm -f "$ANYKERNEL_FIXTURE" "$UPDATE_BINARY_FIXTURE" "$APP_STAGING_FIXTURE" "$KPM_CONFIG_FIXTURE" "$KSUN_NOMOUNT_CONFIG_FIXTURE" "$ZEROMOUNT_CONFIG_FIXTURE" "$MODULE_CONFIG_FIXTURE" "$SCMVERSION_FIXTURE"; rm -rf "$KPM_VERIFY_FIXTURE" "$NOMOUNT_FIXTURE_DIR" "$ZEROMOUNT_FIXTURE_DIR" "$EXTRACT_CERT_FIXTURE_DIR" "$ANYKERNEL_CACHE_FIXTURE_DIR" "$ANYKERNEL_PACKAGE_FIXTURE_DIR" "$ANYKERNEL_SLOT_FIXTURE_DIR" "$SUSFS_VENDOR_FIXTURE_DIR" "$RESOLVER_FIXTURE_DIR"' EXIT
 
+# Reproduce the Telegram report: LineageOS + manual seventeen must identify the
+# missing branch immediately, including when only the modules branch is absent.
+(
+  export BRANCH_FIXTURE="$RESOLVER_FIXTURE_DIR"
+  git() {
+    if [[ "$1" != ls-remote ]]; then
+      command git "$@"
+      return
+    fi
+    printf '%s\n' "$*" >> "$BRANCH_FIXTURE/git.log"
+    case "$BRANCH_FAILURE" in
+      kernel) return 2 ;;
+      modules) [[ "$*" != *-modules.git* ]] || return 2 ;;
+      network) echo 'fatal: unable to access remote' >&2; return 128 ;;
+    esac
+    printf '%s\t%s\n' 1111111111111111111111111111111111111111 "${@: -1}"
+  }
+  sleep() { :; }
+  export -f git sleep
+  for BRANCH_FAILURE in kernel modules network; do
+    export BRANCH_FAILURE
+    : > "$BRANCH_FIXTURE/git.log"
+    : > "$BRANCH_FIXTURE/env"
+    branch=lineage-24.0
+    [[ "$BRANCH_FAILURE" != kernel ]] || branch=seventeen
+    if INPUT_BUILD_PROFILE="SM8550 | OnePlus 11 / 12R | LineageOS (recommended)" \
+      INPUT_BRANCH_MODE="I want to select the branch myself" \
+      INPUT_KERNEL_BRANCH="$branch" \
+      INPUT_CLANG_CHOICE="Recommended (auto-select based on branch)" \
+      INPUT_ROOT_SOLUTION="KernelSU-Next + SUSFS + NoMount (experimental)" \
+      INPUT_BUILD_MODE="Full build (artifact only)" \
+      GITHUB_ENV="$BRANCH_FIXTURE/env" \
+      GITHUB_OUTPUT="$BRANCH_FIXTURE/output" \
+      GITHUB_STEP_SUMMARY="$BRANCH_FIXTURE/summary" \
+      bash "$RESOLVER_SCRIPT" > "$BRANCH_FIXTURE/log" 2>&1; then
+      fail "resolver accepted $BRANCH_FAILURE branch lookup failure"
+    fi
+    [[ ! -s "$BRANCH_FIXTURE/env" ]] || fail "failed resolver exported a partial profile"
+    if grep -Eq 'KernelSU|susfs4ksu|nomount' "$BRANCH_FIXTURE/git.log"; then
+      fail "invalid source branches must fail before optional dependency lookups"
+    fi
+    if [[ "$BRANCH_FAILURE" == network ]]; then
+      assert_eq 5 "$(wc -l < "$BRANCH_FIXTURE/git.log" | tr -d ' ')" "network retry count"
+      grep -Fq 'check the upstream connection and repository access' "$BRANCH_FIXTURE/log" \
+        || fail "network failure must remain distinguishable from a missing branch"
+    else
+      expected_calls=1
+      expected_repo=https://github.com/LineageOS/android_kernel_oneplus_sm8550.git
+      if [[ "$BRANCH_FAILURE" == modules ]]; then
+        expected_calls=2
+        expected_repo=https://github.com/LineageOS/android_kernel_oneplus_sm8550-modules.git
+      fi
+      assert_eq "$expected_calls" "$(wc -l < "$BRANCH_FIXTURE/git.log" | tr -d ' ')" "missing branch lookup count"
+      grep -Fq "Branch '$branch' was not found in $expected_repo" "$BRANCH_FIXTURE/log" \
+        || fail "missing branch diagnostic must name the branch and repository"
+      grep -Fq 'Use the recommended branch automatically' "$BRANCH_FIXTURE/log" \
+        || fail "missing branch diagnostic must explain automatic selection"
+    fi
+  done
+)
+
 # Exercise the real resolver with offline upstream refs, including a default
 # branch migration to 17.0 and an explicit selection of the older 16.0 branch.
 mkdir -p "$RESOLVER_FIXTURE_DIR/bin"
@@ -401,26 +502,81 @@ commit=1111111111111111111111111111111111111111
 for argument in "$@"; do
   if [[ "$argument" == *-modules.git ]]; then
     commit=2222222222222222222222222222222222222222
+  elif [[ "$argument" == https://github.com/LyraVoid/FinaSU.git ]]; then
+    echo 'FinaSU must use the reviewed release pin, not resolve a floating branch' >&2
+    exit 2
   fi
 done
 printf '%s\trefs/heads/%s\n' "$commit" "${@: -1}"
 EOF
 chmod +x "$RESOLVER_FIXTURE_DIR/bin/git"
 RESOLVER_REAL_GIT="$(command -v git)"
+# Verify FinaSU uses its own resolved commit and leaves patch dependencies empty.
+: > "$RESOLVER_FIXTURE_DIR/env"
+PATH="$RESOLVER_FIXTURE_DIR/bin:$PATH" \
+RESOLVER_REAL_GIT="$RESOLVER_REAL_GIT" \
+INPUT_BUILD_PROFILE='SM8550 | OnePlus 11 / 12R | LineageOS (recommended)' \
+INPUT_BRANCH_MODE=manual \
+INPUT_KERNEL_BRANCH=lineage-23.0 \
+INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
+INPUT_ROOT_SOLUTION='FinaSU (experimental)' \
+INPUT_BUILD_MODE='Patch/config validation only' \
+GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" \
+GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
+GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
+  bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log"
+for expected_field in \
+  KSU_TYPE=FinaSU KSU_REPO=https://github.com/LyraVoid/FinaSU.git "KSU_REF=$FINASU_RELEASE" \
+  "KSU_COMMIT=$FINASU_COMMIT" \
+  SUSFS_COMMIT= NOMOUNT_COMMIT= ZEROMOUNT_COMMIT=; do
+  grep -Fxq "$expected_field" "$RESOLVER_FIXTURE_DIR/env" \
+    || fail "FinaSU resolver missing $expected_field"
+done
+
+for finasu_choice in 'FinaSU + SUSFS (experimental)' 'FinaSU + NoMount (experimental)' \
+  'FinaSU + SUSFS + NoMount (experimental)'; do
+  for finasu_soc in sm8450 sm8550 sm8650; do
+    finasu_profile='SM8550 | OnePlus 11 / 12R | LineageOS (recommended)'
+    [[ "$finasu_soc" != sm8450 ]] || finasu_profile='SM8450 | OnePlus 10T / Ace Pro | LineageOS community'
+    [[ "$finasu_soc" != sm8650 ]] || finasu_profile='SM8650 | OnePlus 12 | LineageOS (recommended)'
+    : > "$RESOLVER_FIXTURE_DIR/env"
+    PATH="$RESOLVER_FIXTURE_DIR/bin:$PATH" \
+    RESOLVER_REAL_GIT="$RESOLVER_REAL_GIT" \
+    INPUT_BUILD_PROFILE="$finasu_profile" INPUT_BRANCH_MODE=manual \
+    INPUT_KERNEL_BRANCH=lineage-23.0 \
+    INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
+    INPUT_ROOT_SOLUTION="$finasu_choice" INPUT_BUILD_MODE='Patch/config validation only' \
+    GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
+    GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
+      bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log"
+    expected_susfs='' expected_nomount=''
+    if [[ "$finasu_choice" == *SUSFS* ]]; then
+      resolve_susfs_settings "$finasu_soc" lineage-23.0
+      expected_susfs="$(finasu_susfs_commit "$SUSFS_REF")"
+    fi
+    [[ "$finasu_choice" != *NoMount* ]] || expected_nomount="$FINASU_COMMIT"
+    grep -Fxq "SUSFS_COMMIT=$expected_susfs" "$RESOLVER_FIXTURE_DIR/env" || fail 'FinaSU SUSFS pin'
+    grep -Fxq "NOMOUNT_COMMIT=$expected_nomount" "$RESOLVER_FIXTURE_DIR/env" || fail 'FinaSU NoMount pin'
+    grep -Fxq "KSU_COMMIT=$FINASU_COMMIT" "$RESOLVER_FIXTURE_DIR/env" || fail 'FinaSU source pin'
+  done
+done
+
 for crdroid_profile in \
   "SM7550 | OnePlus Nord CE4 | crDroid (recommended for crDroid)" \
   "SM8550 | OnePlus 11 / 12R | crDroid" \
   "SM8650 | OnePlus 12 | crDroid"; do
   resolve_build_profile "$crdroid_profile"
-  for resolver_case in automatic-17 manual-17 manual-16; do
+  for resolver_case in automatic-17 manual-17 manual-16 batch-16 batch-17; do
     resolver_mode="I want to select the branch myself"
     resolver_branch=17.0
     expected_android=17
     expected_clang=clang-r584948
+    resolver_batch=0
+    [[ "$resolver_case" != batch-* ]] || resolver_batch=1
     if [[ "$resolver_case" == automatic-17 ]]; then
       resolver_mode="Use the recommended branch automatically"
       resolver_branch=""
-    elif [[ "$resolver_case" == manual-16 ]]; then
+    elif [[ "$resolver_case" == manual-16 || "$resolver_case" == batch-16 ]]; then
       resolver_branch=16.0
       expected_android=16
       expected_clang=clang-r563880c
@@ -436,6 +592,7 @@ for crdroid_profile in \
     INPUT_KERNEL_BRANCH="$resolver_branch" \
     INPUT_CLANG_CHOICE="Recommended (auto-select based on branch)" \
     INPUT_ROOT_SOLUTION="No root changes" \
+    INPUT_ANDROID_BATCH_BUILD="$resolver_batch" \
     INPUT_BUILD_MODE="Patch/config validation only" \
     INPUT_ROM_GKI_MODULE_COMPAT="Strict GKI module checks (default)" \
     GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" \
@@ -451,6 +608,7 @@ for crdroid_profile in \
       "KERNEL_COMMIT=1111111111111111111111111111111111111111" \
       "MODULES_COMMIT=2222222222222222222222222222222222222222" \
       "CLANG_VERSION=$expected_clang" "SUPPORTED_ANDROID_VERSIONS=$expected_android" \
+      "ANDROID_BATCH_BUILD=$resolver_batch" \
       "KERNEL_MAKE_FLAGS=$KERNEL_MAKE_FLAGS"; do
       grep -Fxq "$expected_field" "$RESOLVER_FIXTURE_DIR/env" \
         || fail "$crdroid_profile $resolver_case missing $expected_field"
@@ -463,6 +621,31 @@ for crdroid_profile in \
       fail "$crdroid_profile $resolver_case emitted an unexpected warning"
     fi
   done
+done
+
+# A batch job must not silently resolve a non-crDroid source to another Android
+# version, or accept a forgotten matrix expansion.
+for invalid_batch_case in unsupported-profile unexpanded-mode invalid-flag; do
+  invalid_profile='SM8550 | OnePlus 11 / 12R | LineageOS (recommended)'
+  invalid_mode=manual
+  invalid_flag=1
+  if [[ "$invalid_batch_case" == unexpanded-mode ]]; then
+    invalid_profile='SM8550 | OnePlus 11 / 12R | crDroid'
+    invalid_mode='Build Android 16 + 17 (crDroid batch)'
+  elif [[ "$invalid_batch_case" == invalid-flag ]]; then
+    invalid_flag=2
+  fi
+  : > "$RESOLVER_FIXTURE_DIR/env"
+  if INPUT_BUILD_PROFILE="$invalid_profile" INPUT_BRANCH_MODE="$invalid_mode" \
+    INPUT_KERNEL_BRANCH=16.0 INPUT_ANDROID_BATCH_BUILD="$invalid_flag" \
+    INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
+    INPUT_ROOT_SOLUTION='No root changes' INPUT_BUILD_MODE='Patch/config validation only' \
+    GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
+    GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
+      bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log" 2>&1; then
+    fail "resolver accepted invalid Android batch case: $invalid_batch_case"
+  fi
+  [[ ! -s "$RESOLVER_FIXTURE_DIR/env" ]] || fail 'invalid Android batch exported a partial profile'
 done
 
 # SUSFS variants retain tested root revisions while other presets follow main.
@@ -487,6 +670,13 @@ for suki_preset in \
   GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
   GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
     bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log"
+  if [[ "${suki_preset,,}" == *susfs* ]]; then
+    grep -Fxq 'SUSFS_MIN_VERSION=2.3.0' "$RESOLVER_FIXTURE_DIR/env" \
+      || fail "$suki_preset lost the SUSFS v2.3.0 version floor"
+    grep -Fxq "SUSFS_COMMIT=$(su_session_compatible_susfs_commit gki-android14-5.15)" \
+      "$RESOLVER_FIXTURE_DIR/env" \
+      || fail "$suki_preset lost the updated SUSFS pin"
+  fi
   if [[ "$suki_preset" == ReSukiSU* && "${suki_preset,,}" == *susfs* ]]; then
     grep -Fxq 'KSU_COMMIT=fa8311f632a215b5381ec644627c6198d1e8a13e' "$RESOLVER_FIXTURE_DIR/env" \
       || fail "$suki_preset lost its compatible ReSukiSU pin"
@@ -500,6 +690,140 @@ for suki_preset in \
       || fail "$suki_preset must resolve the current upstream commit"
   fi
 done
+
+# Exercise the real resolver with deterministic refs, including legacy inputs.
+(
+  export BAKASU_RESOLVER_FIXTURE="${NOMOUNT_FIXTURE_DIR}/bakasu-resolver"
+  mkdir -p "$BAKASU_RESOLVER_FIXTURE"
+  git() {
+    if [[ "$1" == ls-remote ]]; then
+      printf '%s\n' "$*" >> "$BAKASU_RESOLVER_FIXTURE/git.log"
+      printf '%s\t%s\n' 1111111111111111111111111111111111111111 refs/heads/main
+    else
+      command git "$@"
+    fi
+  }
+  export -f git
+  bakasu_profiles=(
+    "SM8450 | OnePlus 10T / Ace Pro | LineageOS community"
+    "SM8550 | OnePlus 11 / 12R | LineageOS (recommended)"
+    "SM8550 | OnePlus 11 / 12R | LineageOS (recommended)"
+    "SM8650 | OnePlus 12 | LineageOS (recommended)"
+  )
+  bakasu_branches=(lineage-20 lineage-20 lineage-23.0 lineage-23.0)
+  bakasu_susfs_refs=(gki-android13-5.10 gki-android13-5.15 gki-android14-5.15 gki-android14-6.1)
+  for target in "${!bakasu_profiles[@]}"; do
+    for root_name in BakaSU ReSukiSU; do
+      for suffix in "" " + SUSFS" " + SUSFS + NoMount (experimental)" " + SUSFS + ZeroMount (experimental)"; do
+        [[ "$root_name$suffix" != "ReSukiSU + SUSFS" ]] || suffix=" + susfs"
+        resolve_root_solution "$root_name$suffix"
+        : > "$BAKASU_RESOLVER_FIXTURE/git.log"
+        : > "$BAKASU_RESOLVER_FIXTURE/env"
+        INPUT_BUILD_PROFILE="${bakasu_profiles[$target]}" \
+          INPUT_BRANCH_MODE="manual" \
+          INPUT_KERNEL_BRANCH="${bakasu_branches[$target]}" \
+          INPUT_CLANG_CHOICE="Recommended (auto-select based on branch)" \
+          INPUT_ROOT_SOLUTION="$root_name$suffix" \
+          INPUT_BUILD_MODE="Patch/config validation only" \
+          GITHUB_ENV="$BAKASU_RESOLVER_FIXTURE/env" \
+          GITHUB_OUTPUT="$BAKASU_RESOLVER_FIXTURE/output" \
+          GITHUB_STEP_SUMMARY="$BAKASU_RESOLVER_FIXTURE/summary" \
+          bash "$RESOLVER_SCRIPT" > "$BAKASU_RESOLVER_FIXTURE/log"
+        grep -Fxq "KSU_TYPE=$KSU_TYPE" "$BAKASU_RESOLVER_FIXTURE/env" \
+          || fail "resolver did not normalize $root_name$suffix"
+        grep -Fxq 'KSU_REPO=https://github.com/Baka-SU/BakaSU.git' "$BAKASU_RESOLVER_FIXTURE/env" \
+          || fail "resolver did not use the canonical BakaSU repository"
+        if [[ "$KSU_TYPE" == *susfs* ]]; then
+          grep -Fxq 'SUSFS_MIN_VERSION=2.3.0' "$BAKASU_RESOLVER_FIXTURE/env" \
+            || fail "resolver lost the SUSFS v2.3.0 version floor"
+          grep -Fxq 'KSU_COMMIT=fa8311f632a215b5381ec644627c6198d1e8a13e' "$BAKASU_RESOLVER_FIXTURE/env" \
+            || fail "resolver lost the compatible BakaSU SUSFS pin"
+          grep -Fxq "SUSFS_REF=${bakasu_susfs_refs[$target]}" "$BAKASU_RESOLVER_FIXTURE/env" \
+            || fail "resolver chose the wrong BakaSU SUSFS branch"
+          grep -Fxq "SUSFS_COMMIT=$(su_session_compatible_susfs_commit "${bakasu_susfs_refs[$target]}")" \
+            "$BAKASU_RESOLVER_FIXTURE/env" \
+            || fail "resolver lost the matching BakaSU SUSFS ABI pin"
+          if grep -Fq 'https://gitlab.com/simonpunk/susfs4ksu.git' "$BAKASU_RESOLVER_FIXTURE/git.log"; then
+            fail "pinned BakaSU SUSFS presets must not resolve the latest SUSFS branch"
+          fi
+          if grep -Fq 'https://github.com/Baka-SU/BakaSU.git' "$BAKASU_RESOLVER_FIXTURE/git.log"; then
+            fail "pinned BakaSU SUSFS presets must not resolve a moving branch"
+          fi
+        else
+          grep -Fxq 'KSU_COMMIT=1111111111111111111111111111111111111111' "$BAKASU_RESOLVER_FIXTURE/env" \
+            || fail "resolver did not resolve the BakaSU commit"
+          grep -Fxq 'ls-remote --exit-code https://github.com/Baka-SU/BakaSU.git refs/heads/main' \
+            "$BAKASU_RESOLVER_FIXTURE/git.log" \
+            || fail "resolver did not look up the BakaSU main branch"
+        fi
+        if grep -Fq 'github.com/ReSukiSU/' "$BAKASU_RESOLVER_FIXTURE/git.log"; then
+          fail "resolver still contacts the old ReSukiSU repository"
+        fi
+      done
+    done
+  done
+)
+
+# Reproduce the final-link failure with real objects: private SELinux helpers
+# cannot satisfy external hooks, and the old driver has no preinit entrypoints.
+(
+  hook_fixture="${NOMOUNT_FIXTURE_DIR}/susfs-hook-linkage"
+  mkdir -p "$hook_fixture/toolchain" "$hook_fixture/out/fs" \
+    "$hook_fixture/out/security/selinux" "$hook_fixture/out/drivers/kernelsu"
+  cd "$hook_fixture"
+  CLANG_ROOT="$hook_fixture/toolchain"
+  KSU_DRIVER_DIR=drivers
+  ln -s "$(command -v nm)" "$CLANG_ROOT/llvm-nm"
+  hook_cc=(cc)
+  if [[ "$(uname -s)" == Darwin ]]; then
+    # Match the kernel's ELF symbol names; Mach-O prefixes C symbols with '_',
+    # which would let the missing-hook negative test pass without checking them.
+    hook_cc+=(--target=aarch64-linux-gnu)
+  fi
+  cat > provider.c <<'EOF'
+void ksu_handle_execveat(void) {}
+void ksu_handle_selinux_setprocattr(void) {}
+__attribute__((used)) static void my_write_context(void) {}
+__attribute__((used)) static void my_write_access(void) {}
+EOF
+  "${hook_cc[@]}" -c provider.c -o out/drivers/kernelsu/provider.o
+  printf '%s\n' 'void susfs_init(void) {}' > susfs.c
+  "${hook_cc[@]}" -c susfs.c -o out/fs/susfs.o
+  printf '%s\n' 'extern void ksu_handle_execveat(void);' \
+    'void exec_hook(void) { ksu_handle_execveat(); }' > caller.c
+  "${hook_cc[@]}" -c caller.c -o out/fs/exec.o
+  printf '%s\n' 'void local_selinux_hook(void) {}' > caller.c
+  "${hook_cc[@]}" -c caller.c -o out/security/selinux/hooks.o
+  "${hook_cc[@]}" -c caller.c -o out/security/selinux/selinuxfs.o
+  verify_susfs_hook_linkage >/dev/null \
+    || fail "matching legacy SUSFS hook ABI was rejected"
+  cat > caller.c <<'EOF'
+extern void ksu_preinit_handle_post_execveat(void), ksu_setup_preinit_file(void);
+extern void my_setprocattr(void), my_write_context(void), my_write_access(void);
+void incompatible_hooks(void) {
+  ksu_preinit_handle_post_execveat(); ksu_setup_preinit_file();
+  my_setprocattr(); my_write_context(); my_write_access();
+}
+EOF
+  "${hook_cc[@]}" -c caller.c -o out/fs/exec.o
+  if verify_susfs_hook_linkage > missing.log 2>&1; then
+    fail "SUSFS hook validation accepted the five unresolved symbols from run 39396003516"
+  fi
+  for missing_hook in ksu_preinit_handle_post_execveat ksu_setup_preinit_file \
+    my_setprocattr my_write_context my_write_access; do
+    grep -Fxq "$missing_hook" missing.log || fail "missing hook was not reported: $missing_hook"
+  done
+  cat > provider.c <<'EOF'
+void ksu_preinit_handle_post_execveat(void) {}
+void ksu_setup_preinit_file(void) {}
+void my_setprocattr(void) {}
+void my_write_context(void) {}
+void my_write_access(void) {}
+EOF
+  "${hook_cc[@]}" -c provider.c -o out/drivers/kernelsu/provider.o
+  verify_susfs_hook_linkage >/dev/null \
+    || fail "SUSFS hook validation rejected global definitions of the required hooks"
+)
 
 mkdir -p "$ZEROMOUNT_FIXTURE_DIR/fs"
 cat > "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" <<'EOF'
@@ -820,6 +1144,46 @@ chmod +x "$KPM_VERIFY_FIXTURE/toolchain/llvm-nm"
     || fail "KPM proof does not record the leaf resolver definition"
 )
 
+(
+  finasu_config="$RESOLVER_FIXTURE_DIR/finasu.config"
+  printf '%s\n' CONFIG_KSU=m CONFIG_KPROBES=n CONFIG_EXT4_FS=m \
+    CONFIG_KALLSYMS_ALL=n CONFIG_KSU_SUSFS=y CONFIG_KSU_HOOK_SUSFS_INLINE=y \
+    CONFIG_HEADERS_INSTALL=n CONFIG_KSU_DEBUG=y CONFIG_KSU_DISABLE_MANAGER=y CONFIG_KSU_DISABLE_POLICY=y > "$finasu_config"
+  KSU_TYPE=FinaSU
+  apply_variant_configs "$finasu_config"
+  for key in CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_KSU_DYNAMIC_MANAGER CONFIG_HEADERS_INSTALL CONFIG_KSU_HOOK_TRACEPOINT; do
+    require_config_enabled "$finasu_config" "$key"
+  done
+  for key in CONFIG_KSU_SUSFS CONFIG_KSU_HOOK_SUSFS_INLINE CONFIG_KSU_DEBUG CONFIG_KSU_DISABLE_MANAGER CONFIG_KSU_DISABLE_POLICY; do
+    grep -Fxq "# $key is not set" "$finasu_config" || fail "FinaSU must disable $key"
+  done
+  config_hash="$(sha256sum "$finasu_config" | cut -d' ' -f1)"
+  apply_variant_configs "$finasu_config"
+  assert_eq "$config_hash" "$(sha256sum "$finasu_config" | cut -d' ' -f1)" "FinaSU config idempotence"
+)
+
+for KSU_TYPE in FinaSU-with-susfs FinaSU-with-nomount FinaSU-with-susfs-nomount; do
+  finasu_config="$RESOLVER_FIXTURE_DIR/$KSU_TYPE.config"
+  : > "$finasu_config"
+  apply_variant_configs "$finasu_config"
+  require_config_enabled "$finasu_config" CONFIG_KSU
+  require_config_enabled "$finasu_config" CONFIG_KSU_DYNAMIC_MANAGER
+  require_config_enabled "$finasu_config" CONFIG_HEADERS_INSTALL
+  if [[ "$KSU_TYPE" == *susfs* ]]; then
+    for key in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_HOOK_SUSFS_INLINE CONFIG_THREAD_INFO_IN_TASK; do
+      require_config_enabled "$finasu_config" "$key"
+    done
+    require_config_disabled "$finasu_config" CONFIG_KSU_HOOK_TRACEPOINT
+  else
+    require_config_enabled "$finasu_config" CONFIG_KSU_HOOK_TRACEPOINT
+    require_config_disabled "$finasu_config" CONFIG_KSU_SUSFS
+  fi
+  if [[ "$KSU_TYPE" == *nomount* ]]; then
+    require_config_enabled "$finasu_config" CONFIG_NOMOUNT
+    require_config_enabled "$finasu_config" CONFIG_KEYS
+  fi
+done
+
 KSU_TYPE="SukiSU-Ultra-with-susfs-nomount-KPM"
 apply_variant_configs "$KPM_CONFIG_FIXTURE"
 grep -q '^CONFIG_KPM=y$' "$KPM_CONFIG_FIXTURE" || fail "KPM config"
@@ -986,6 +1350,8 @@ printf '%s\n' \
   'if [ $? != 0 ]; then exit 1; fi;' \
   'OLD_PATH="$PATH";' \
   > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/source/META-INF/com/google/android/update-binary"
+cat "$SCRIPT_DIR/fixtures/anykernel-slot/update-binary" >> "$ANYKERNEL_PACKAGE_FIXTURE_DIR/source/META-INF/com/google/android/update-binary"
+cp "$SCRIPT_DIR/fixtures/anykernel-slot/ak3-core.sh" "$ANYKERNEL_PACKAGE_FIXTURE_DIR/source/tools/ak3-core.sh"
 printf '%s\n' upstream-arm-busybox > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/source/tools/busybox"
 printf '%s\n' upstream-arm-magiskboot > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/source/tools/magiskboot"
 for optional_tool in fec httools_static lptools_static magiskpolicy snapshotupdater_static; do
@@ -1007,6 +1373,17 @@ printf '%s\n' 'kernel.string=dirty-cache' > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work
 printf '%s\n' stale > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/Image"
 printf '%s\n' image > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/out/arch/arm64/boot/Image"
 printf '%s\n' image > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8650/out/arch/arm64/boot/Image"
+(
+  # Packaging must require proof for the exact Image it includes.
+  . "$SCRIPT_DIR/../lib/kpm-image.sh"
+  {
+    echo patched=true
+    echo "patch_version=$KPM_PATCH_VERSION"
+    echo "tools_sha256=$KPM_TOOLS_SHA256"
+    echo "payload_sha256=$KPM_PAYLOAD_SHA256"
+    echo "image_sha256=$(sha256sum "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/out/arch/arm64/boot/Image" | awk '{print $1}')"
+  } > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/kpm-image-proof.txt"
+)
 printf '%s\n' sukisu-arm64-busybox > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/SukiSU-Ultra/userspace/ksud/bin/aarch64/busybox"
 printf '%s\n' magisk-arm64-magiskboot > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/magisk-apk/lib/arm64-v8a/libmagiskboot.so"
 printf '%s\n' magisk-arm64-busybox > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/magisk-apk/lib/arm64-v8a/libbusybox.so"
@@ -1177,6 +1554,81 @@ grep -Fq 'Bundled MagiskBoot ABI: arm64' \
 grep -Fq 'Removing incompatible app-injected mkbootfs' \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
   || fail "OnePlus 12 package does not remove an injected 32-bit mkbootfs"
+
+# Exercise real FinaSU packaging (including jq, ZIP and checksums) against the
+# local AnyKernel fixture, with an embedded ARM64 runner and release identity.
+python3 - "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550" "$FINASU_MANAGER_CERT_SHA256" <<'PY'
+from pathlib import Path
+import struct
+import sys
+root = Path(sys.argv[1])
+preinit = root / 'out/drivers/kernelsu/preinit'
+preinit.mkdir(parents=True)
+runner = bytearray(64)
+runner[:6] = b'\x7fELF\x02\x01'
+struct.pack_into('<HHIQ', runner, 16, 2, 183, 1, 0x400000)
+(preinit / 'runner.elf').write_bytes(runner)
+(preinit / 'blob.o').write_bytes(b'blob' + runner)
+(root / 'out/arch/arm64/boot/Image').write_bytes(b'\0' + sys.argv[2].encode() + b'\0' + runner)
+PY
+for finasu_package_type in FinaSU FinaSU-with-susfs FinaSU-with-nomount FinaSU-with-susfs-nomount; do
+for finasu_package_target in single17 batch16 batch17; do
+  package_android=17 package_batch=0 package_suffix=''
+  if [[ "$finasu_package_target" == batch* ]]; then
+    package_android="${finasu_package_target#batch}"
+    package_batch=1
+    package_suffix="_A${package_android}"
+  fi
+  finasu_backend=tracepoint
+  finasu_nomount_ref=''
+  [[ "$finasu_package_type" != *susfs* ]] || finasu_backend=susfs-inline
+  [[ "$finasu_package_type" != *nomount* ]] || finasu_nomount_ref="$FINASU_RELEASE:userspace/nomount"
+  (
+    cd "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work"
+    SOC=sm8550 \
+    PROFILE_ID=test-profile \
+    TARGET_NAME='Test target' \
+    DEVICE_CODENAMES=salami \
+    DEVICE_NAMES=salami \
+    SUPPORTED_ANDROID_VERSIONS="$package_android" \
+    ANDROID_BATCH_BUILD="$package_batch" \
+    SOURCE_NAME=test \
+    KERNEL_BRANCH=17.0 \
+    MODULES_BRANCH=17.0 \
+    KERNEL_COMMIT=1111111111111111111111111111111111111111 \
+    MODULES_COMMIT=2222222222222222222222222222222222222222 \
+    CLANG_VERSION=test-clang \
+    KSU_TYPE="$finasu_package_type" \
+    KSU_REPO=https://github.com/LyraVoid/FinaSU.git \
+    KSU_REF="$FINASU_RELEASE" \
+    KSU_COMMIT="$FINASU_COMMIT" \
+    NOMOUNT_REPO=https://github.com/LyraVoid/FinaSU.git \
+    NOMOUNT_REF="$finasu_nomount_ref" \
+    BUILD_TIMESTAMP=20260101_000003 \
+    GITHUB_WORKSPACE="$ANYKERNEL_PACKAGE_FIXTURE_DIR/work" \
+    GITHUB_ENV="$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/github-env" \
+    GITHUB_OUTPUT="$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/github-output" \
+    ANYKERNEL_REPO="$ANYKERNEL_PACKAGE_FIXTURE_DIR/source" \
+    ANYKERNEL_COMMIT="$ANYKERNEL_PACKAGE_COMMIT" \
+    bash "$ANYKERNEL_PACKAGE_SCRIPT" >/dev/null
+    cd release-assets
+    sha256sum --check SHA256SUMS >/dev/null
+    jq -e --arg release "$FINASU_RELEASE" --arg apk_hash "$FINASU_MANAGER_APK_SHA256" \
+      --arg commit "$FINASU_COMMIT" --arg backend "$finasu_backend" --arg type "$finasu_package_type" \
+      --arg nomount_ref "$finasu_nomount_ref" --arg android "$package_android" \
+      --argjson batch "$([[ "$package_batch" == 1 ]] && echo true || echo false)" \
+      '.manager_reference_release == $release and .manager_apk_sha256 == $apk_hash and
+       .kernelsu_commit == $commit and (.finasu_compat_patch_sha256 | length) == 64 and
+       .finasu_hook_backend == $backend and .root_solution == $type and .nomount_ref == $nomount_ref and
+       .supported_android_versions == $android and .android_batch_build == $batch' \
+      build-info.json >/dev/null || fail 'FinaSU package has incorrect release provenance'
+    unzip -p "test-profile_${finasu_package_type}_111111111111_20260101_000003${package_suffix}.zip" build-info.json \
+      | cmp - build-info.json || fail 'FinaSU ZIP provenance differs from external build-info'
+    grep -Fq "$FINASU_MANAGER_URL" release-notes.md || fail 'FinaSU release notes omit the paired manager'
+    grep -Fxq "supported.versions=$package_android" ../AnyKernel3/anykernel.sh || fail 'Android ZIP version gate'
+  )
+done
+done
 
 for i in "${!profiles[@]}"; do
   resolve_build_profile "${profiles[$i]}"

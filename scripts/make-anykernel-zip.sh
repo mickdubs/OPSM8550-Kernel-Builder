@@ -9,6 +9,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/git-helpers.sh"
 # shellcheck source=lib/anykernel-helpers.sh
 . "${SCRIPT_DIR}/lib/anykernel-helpers.sh"
+# shellcheck source=lib/kpm-image.sh
+. "${SCRIPT_DIR}/lib/kpm-image.sh"
+# shellcheck source=lib/finasu-manager.sh
+. "${SCRIPT_DIR}/lib/finasu-manager.sh"
+# shellcheck source=lib/finasu-integration.sh
+. "${SCRIPT_DIR}/lib/finasu-integration.sh"
+# shellcheck source=lib/build-metadata.sh
+. "${SCRIPT_DIR}/lib/build-metadata.sh"
 
 : "${SOC:?}"
 : "${PROFILE_ID:?}"
@@ -29,6 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${ANYKERNEL_COMMIT:?}"
 
 SUPPORTED_ANDROID_VERSIONS="${SUPPORTED_ANDROID_VERSIONS:-}"
+ANDROID_BATCH_BUILD="${ANDROID_BATCH_BUILD:-0}"
+ANDROID_VARIANT="$(android_build_variant "$ANDROID_BATCH_BUILD" "$SUPPORTED_ANDROID_VERSIONS")"
 KERNEL_MAKE_FLAGS="${KERNEL_MAKE_FLAGS:-}"
 ROM_GKI_MODULE_COMPAT="${ROM_GKI_MODULE_COMPAT:-0}"
 case "$ROM_GKI_MODULE_COMPAT" in
@@ -38,10 +48,13 @@ esac
 KSU_COMMIT="${KSU_COMMIT:-}"
 KSU_REPO="${KSU_REPO:-}"
 KSU_REF="${KSU_REF:-}"
+KSU_UAPI_VERSION="${KSU_UAPI_VERSION:-}"
+KSU_UAPI_PATCH_SHA256="${KSU_UAPI_PATCH_SHA256:-}"
 SUSFS_REF="${SUSFS_REF:-}"
 SUSFS_COMMIT="${SUSFS_COMMIT:-}"
 SUSFS_VERSION="${SUSFS_VERSION:-}"
 NOMOUNT_REF="${NOMOUNT_REF:-}"
+NOMOUNT_REPO="${NOMOUNT_REPO:-}"
 NOMOUNT_COMMIT="${NOMOUNT_COMMIT:-}"
 NOMOUNT_VERSION="${NOMOUNT_VERSION:-}"
 ZEROMOUNT_REPO="${ZEROMOUNT_REPO:-}"
@@ -60,14 +73,26 @@ MAGISK_BUSYBOX_ARM64_SHA256="${MAGISK_BUSYBOX_ARM64_SHA256:-4d60ab3f5a59ebb2ca86
 MAGISK_APK_PATH="${MAGISK_APK_PATH:-}"
 
 SHORT_KERNEL_COMMIT="${KERNEL_COMMIT:0:12}"
-ZIP_NAME="${PROFILE_ID}_${KSU_TYPE}_${SHORT_KERNEL_COMMIT}_${BUILD_TIMESTAMP}"
+ZIP_NAME="${PROFILE_ID}_${KSU_TYPE}_${SHORT_KERNEL_COMMIT}_${BUILD_TIMESTAMP}${ANDROID_VARIANT:+_${ANDROID_VARIANT}}"
 if [[ "$ROM_GKI_MODULE_COMPAT" == 1 ]]; then
   ZIP_NAME="${ZIP_NAME}_rom-gki-compat"
 fi
 ASSET_DIR="${GITHUB_WORKSPACE:-$(pwd)}/release-assets"
 KPM_ENABLED=false
+FINASU_HOOK_BACKEND=""
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
+  FINASU_HOOK_BACKEND=tracepoint
+  [[ "$KSU_TYPE" != *susfs* ]] || FINASU_HOOK_BACKEND=susfs-inline
+  if [[ "$KSU_COMMIT" != "$FINASU_COMMIT" ]]; then
+    echo "::error::FinaSU packaging requires the paired $FINASU_RELEASE source commit."
+    exit 1
+  fi
+  verify_finasu_manager_binary "${SOC}/out/arch/arm64/boot/Image" "${SOC}/finasu-manager-proof.txt"
+  verify_finasu_preinit_binary "$SOC" "${SOC}/finasu-preinit-proof.txt" "${SOC}/out/arch/arm64/boot/Image"
+fi
 if [[ "$KSU_TYPE" == *KPM* ]]; then
   KPM_ENABLED=true
+  verify_kpm_image_patch "${SOC}/out/arch/arm64/boot/Image" "${SOC}/kpm-image-proof.txt"
 fi
 
 {
@@ -115,6 +140,10 @@ configure_anykernel_properties \
 set_anykernel_flasher_developer "$ANYKERNEL_UPDATE_BINARY"
 add_anykernel_devicecheck_diagnostics "$ANYKERNEL_UPDATE_BINARY"
 patch_anykernel_app_flash_staging "$ANYKERNEL_UPDATE_BINARY"
+patch_anykernel_slot_detection \
+  "$ANYKERNEL_UPDATE_BINARY" \
+  "AnyKernel3/tools/ak3-core.sh" \
+  "${SCRIPT_DIR}/templates/detect-slot.sh"
 
 if [[ "$KPM_ENABLED" == true ]]; then
   KSU_CHECKOUT_NAME="$(basename "${KSU_REPO%.git}")"
@@ -158,6 +187,7 @@ jq -n \
   --arg device_codenames "$DEVICE_CODENAMES" \
   --arg accepted_device_ids "$DEVICE_NAMES" \
   --arg android_versions "$SUPPORTED_ANDROID_VERSIONS" \
+  --argjson android_batch_build "$([[ "$ANDROID_BATCH_BUILD" == 1 ]] && echo true || echo false)" \
   --arg soc "$SOC" \
   --arg source "$SOURCE_NAME" \
   --arg branch "$KERNEL_BRANCH" \
@@ -169,13 +199,25 @@ jq -n \
   --argjson rom_gki_module_compat "$([[ "$ROM_GKI_MODULE_COMPAT" == 1 ]] && echo true || echo false)" \
   --arg root_solution "$KSU_TYPE" \
   --argjson kpm_enabled "$KPM_ENABLED" \
+  --arg kpm_patch_version "$([[ "$KPM_ENABLED" == true ]] && echo "$KPM_PATCH_VERSION" || true)" \
+  --arg kpm_tools_sha256 "$([[ "$KPM_ENABLED" == true ]] && echo "$KPM_TOOLS_SHA256" || true)" \
+  --arg kpm_payload_sha256 "$([[ "$KPM_ENABLED" == true ]] && echo "$KPM_PAYLOAD_SHA256" || true)" \
   --arg ksu_repo "$KSU_REPO" \
   --arg ksu_ref "$KSU_REF" \
   --arg ksu_commit "$KSU_COMMIT" \
+  --arg ksu_uapi_version "$KSU_UAPI_VERSION" \
+  --arg ksu_uapi_patch_sha256 "$KSU_UAPI_PATCH_SHA256" \
+  --arg manager_certificate_sha256 "$([[ "$KSU_TYPE" == FinaSU* ]] && echo "$FINASU_MANAGER_CERT_SHA256" || true)" \
+  --arg manager_release "$([[ "$KSU_TYPE" == FinaSU* ]] && echo "$FINASU_RELEASE" || true)" \
+  --arg manager_apk_url "$([[ "$KSU_TYPE" == FinaSU* ]] && echo "$FINASU_MANAGER_URL" || true)" \
+  --arg manager_apk_sha256 "$([[ "$KSU_TYPE" == FinaSU* ]] && echo "$FINASU_MANAGER_APK_SHA256" || true)" \
+  --arg finasu_compat_patch_sha256 "$([[ "$KSU_TYPE" == FinaSU* ]] && sha256sum "${SCRIPT_DIR}/patches/finasu-netisolate-stack.patch" | awk '{print $1}' || true)" \
+  --arg finasu_hook_backend "$FINASU_HOOK_BACKEND" \
   --arg susfs_ref "$SUSFS_REF" \
   --arg susfs_commit "$SUSFS_COMMIT" \
   --arg susfs_version "$SUSFS_VERSION" \
   --arg nomount_ref "$NOMOUNT_REF" \
+  --arg nomount_repo "$NOMOUNT_REPO" \
   --arg nomount_commit "$NOMOUNT_COMMIT" \
   --arg nomount_version "$NOMOUNT_VERSION" \
   --arg zeromount_repo "$ZEROMOUNT_REPO" \
@@ -196,6 +238,7 @@ jq -n \
     device_codenames: ($device_codenames | split(" ")),
     accepted_device_ids: ($accepted_device_ids | split(" ")),
     supported_android_versions: $android_versions,
+    android_batch_build: $android_batch_build,
     soc: $soc,
     source: $source,
     branch: $branch,
@@ -207,13 +250,25 @@ jq -n \
     rom_gki_module_compat: $rom_gki_module_compat,
     root_solution: $root_solution,
     kpm_enabled: $kpm_enabled,
+    kpm_patch_version: $kpm_patch_version,
+    kpm_tools_sha256: $kpm_tools_sha256,
+    kpm_payload_sha256: $kpm_payload_sha256,
     kernelsu_repository: $ksu_repo,
     kernelsu_ref: $ksu_ref,
     kernelsu_commit: $ksu_commit,
+    kernelsu_uapi_version: $ksu_uapi_version,
+    kernelsu_uapi_patch_sha256: $ksu_uapi_patch_sha256,
+    manager_certificate_sha256: $manager_certificate_sha256,
+    manager_reference_release: $manager_release,
+    manager_apk_url: $manager_apk_url,
+    manager_apk_sha256: $manager_apk_sha256,
+    finasu_compat_patch_sha256: $finasu_compat_patch_sha256,
+    finasu_hook_backend: $finasu_hook_backend,
     susfs_ref: $susfs_ref,
     susfs_commit: $susfs_commit,
     susfs_version: $susfs_version,
     nomount_ref: $nomount_ref,
+    nomount_repository: $nomount_repo,
     nomount_commit: $nomount_commit,
     nomount_version: $nomount_version,
     zeromount_patch_repository: $zeromount_repo,
@@ -263,6 +318,7 @@ cat > "$ASSET_DIR/release-notes.md" <<EOF_NOTES
 - Accepted device IDs: ${DEVICE_NAMES}
 - Source: ${SOURCE_NAME}
 - Branch: ${KERNEL_BRANCH}
+- Android target: ${SUPPORTED_ANDROID_VERSIONS:-unknown}
 - Kernel commit: \`${KERNEL_COMMIT}\`
 - Modules branch: ${MODULES_BRANCH}
 - Modules commit: \`${MODULES_COMMIT}\`
@@ -271,7 +327,9 @@ cat > "$ASSET_DIR/release-notes.md" <<EOF_NOTES
 - ROM GKI module compatibility: ${ROM_GKI_MODULE_COMPAT}
 - Root solution: ${KSU_TYPE}
 - KernelSU source: ${KSU_REPO:-disabled} (${KSU_REF:-none}, ${KSU_COMMIT:-none})
+- KernelSU UAPI backport: ${KSU_UAPI_VERSION:-none} (patch SHA-256: ${KSU_UAPI_PATCH_SHA256:-none})
 - KPM: ${KPM_ENABLED}
+- KPM Image injection: $([[ "$KPM_ENABLED" == true ]] && echo "$KPM_PATCH_VERSION (verified)" || echo disabled)
 - SUSFS: ${SUSFS_NOTE}
 - NoMount: ${NOMOUNT_NOTE}
 - ZeroMount: ${ZEROMOUNT_NOTE}
@@ -285,6 +343,21 @@ Use it only with a ROM build whose vendor modules match the source, branch, and 
 When ROM GKI module compatibility is enabled, protected-symbol enforcement is disabled so the ROM's system_dlkm modules may load with this custom Image. Their signatures cannot be authenticated by this Image's newly generated key. This is experimental and reduces GKI module protection.
 See \`build-info.json\` and \`SHA256SUMS\` for provenance and integrity data.
 EOF_NOTES
+
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
+  cat >> "$ASSET_DIR/release-notes.md" <<EOF_FINASU
+
+## FinaSU manager pairing
+
+Install the matching official [$FINASU_MANAGER_APK]($FINASU_MANAGER_URL) for this $FINASU_RELEASE driver.
+Manager APK SHA-256: \`$FINASU_MANAGER_APK_SHA256\`.
+The manager APK contains ksud; updating the kernel alone does not update the installed manager or userspace daemon.
+The selected hook backend ($([[ "$KSU_TYPE" == *susfs* ]] && echo 'SUSFS Inline' || echo Tracepoint)) and embedded preinit runner are checked during this build.
+EOF_FINASU
+  if [[ "$KSU_TYPE" == *nomount* ]]; then
+    echo 'NoMount API v22 is built into this kernel. Select NoMount in the FinaSU Manager mounting settings to use it; ksud probes the built-in driver without loading another nomount.ko.' >> "$ASSET_DIR/release-notes.md"
+  fi
+fi
 
 (
   cd "$ASSET_DIR"

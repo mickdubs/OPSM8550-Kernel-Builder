@@ -119,6 +119,23 @@ The OnePlus 11 / 12R crDroid profile passes the common OPlus DTB flag and both
 the Salami and Aston device flags on every make invocation, matching the
 upstream device configurations for the shared kernel image.
 
+To build both Android versions in one run, select
+**`Build Android 16 + 17 (crDroid batch)`** in the **branch mode** dropdown.
+Use one of the three crDroid profiles (Nord CE4, OnePlus 11 / 12R, or OnePlus
+12). The workflow starts separate `16.0` and `17.0` jobs, each resolving its
+matching kernel/modules commits. The manual branch dropdown is ignored in
+this mode. Keep the compiler on **Recommended** to select `clang-r563880c`
+for A16 and `clang-r584948` for A17; an explicitly selected compiler remains
+an override for both jobs.
+
+This works with every individual root preset, including FinaSU + SUSFS +
+NoMount. Combining it with either three-root batch creates six jobs. Package
+and diagnostics artifacts end in `-A16` or `-A17`, ZIP/Image filenames contain
+`_A16` or `_A17`, and each ZIP accepts only its own Android version. Release
+mode publishes every variant under one tag with separate build manifests and
+checksums, even if the two branches point at the same source commit. Other
+source families are rejected early because their Android branch names differ.
+
 ## Root integrations
 
 Available workflow presets:
@@ -132,31 +149,96 @@ Available workflow presets:
 | `KernelSU-Next + SUSFS + NoMount (experimental)` | KernelSU-Next with SUSFS and NoMount | Experimental |
 | `KernelSU-Next + SUSFS + ZeroMount (experimental)` | KernelSU-Next with SUSFS and ZeroMount | Experimental |
 | `KowSU` | KowSU | Supported |
+| `FinaSU (experimental)` | FinaSU, built into the kernel | Experimental |
+| `FinaSU + SUSFS (experimental)` | FinaSU with SUSFS Inline hooks | Experimental |
+| `FinaSU + NoMount (experimental)` | FinaSU with built-in NoMount v22 | Experimental |
+| `FinaSU + SUSFS + NoMount (experimental)` | FinaSU with SUSFS Inline and built-in NoMount v22 | Experimental |
 | `SukiSU Ultra + KPM (experimental)` | SukiSU Ultra with KPM | Experimental |
 | `SukiSU Ultra + SUSFS + KPM (experimental)` | SukiSU Ultra with SUSFS and KPM | Experimental |
 | `SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)` | SukiSU Ultra with SUSFS, ZeroMount, and KPM | Experimental |
 | `SukiSU Ultra + SUSFS + NoMount + KPM (experimental)` | SukiSU Ultra with SUSFS, NoMount, and KPM | Experimental |
-| `ReSukiSU` | ReSukiSU | Supported |
-| `ReSukiSU + susfs` | ReSukiSU with SUSFS | Supported |
-| `ReSukiSU + SUSFS + ZeroMount (experimental)` | ReSukiSU with SUSFS and ZeroMount | Experimental |
-| `ReSukiSU + SUSFS + NoMount (experimental)` | ReSukiSU with SUSFS and NoMount | Experimental |
+| `BakaSU` | BakaSU | Supported |
+| `BakaSU + SUSFS` | BakaSU with SUSFS | Supported |
+| `BakaSU + SUSFS + ZeroMount (experimental)` | BakaSU with SUSFS and ZeroMount | Experimental |
+| `BakaSU + SUSFS + NoMount (experimental)` | BakaSU with SUSFS and NoMount | Experimental |
+
+FinaSU is pinned to [`LyraVoid/FinaSU v1.4.5`](https://github.com/LyraVoid/FinaSU/releases/tag/v1.4.5),
+commit `a839ce2d742f0f1450a3aad20bdc14bc060da840`. Select `FinaSU (experimental)`
+in the root dropdown and install the matching official
+[`FinaSU_v1.4.5_33168-release.apk`](https://github.com/LyraVoid/FinaSU/releases/download/v1.4.5/FinaSU_v1.4.5_33168-release.apk).
+Its SHA-256 is `edbe2e8fb860135ad0142d672ded2ee4327d70a06746d8d629645184f7eeaeb6`.
+The APK contains ksud: flashing a newer kernel does not update the installed
+manager or daemon. v1.4.5 fixes feature initialization when `/data/adb/modules`
+is absent and includes v1.4.4's module feature ownership and Manager improvements.
+The source/APK pair is maintained in `scripts/lib/finasu-release.sh`.
+
+All FinaSU presets enable the driver's KPROBES/EXT4 dependencies,
+`CONFIG_KALLSYMS_ALL`, dynamic manager support, installed UAPI headers, and the
+selected hook backend. They disable debug logging and require preinit with
+`KSU_REQUIRE_PREINIT=1`; smoke builds check the ARM64 runner and blob, and full
+builds and packaging also check its bytes in the final Image. A guarded patch
+moves netisolate's 2064-byte empty cleanup policy from the kernel stack to
+read-only storage, preserving the cleanup order.
+
+The verified v1.4.5 manager certificate (`2d89b50a…5d448458`, 716 bytes,
+unchanged since v1.2.1) is supplied in the release signature slot. Both
+post-build verification and packaging check that the final Image contains this
+certificate hash; `build-info.json` records the manager release, APK URL/digest,
+certificate hash, and compatibility patch digest. Release notes link the paired
+APK. A build using only the upstream default certificate can boot but reject
+FinaSU Manager as not installed.
+
+The base and NoMount-only presets use Tracepoint. SUSFS presets use FinaSU's
+Built-In-only **SUSFS Inline** backend and apply the kernel-side SUSFS v2.3.0
+patch; FinaSU already supplies the driver interface, so the generic KernelSU
+10-patch and legacy SELinux shim are skipped. The per-KMI snapshots match the
+interfaces in FinaSU's documented reference rather than following a newer,
+incompatible SUSFS branch head:
+
+| SUSFS target | Pinned commit |
+| --- | --- |
+| `gki-android13-5.10` | `cbe3fe7b9fa599d316f68b08b06cde48218eaff5` |
+| `gki-android13-5.15` | `86b5b10068459dedb545dc5db46a0f0254428eda` |
+| `gki-android14-5.15` | `10b4f2156470338a5db2040f3d85992c285aa595` |
+| `gki-android14-6.1` | `b57ed1998b82c4e3a2a81cdbf11172a560979c40` |
+
+The NoMount presets build FinaSU v1.4.5's vendored NoMount v2.2.0 driver
+(API **22**) into the kernel with `CONFIG_NOMOUNT=y` and `CONFIG_KEYS=y`.
+The four source files are checked against their recorded SHA-256 values. This
+keeps the kernel's rule format aligned with the paired Manager/ksud; it does
+not follow NoMount `master`. Select **NoMount** in FinaSU Manager's mounting
+settings to use it. ksud detects the built-in key API and does not load another
+`nomount.ko`; the default automatic mount mode does not activate NoMount.
+`build-info.json` records the hook backend and NoMount source repository/ref.
+
+KPM and ZeroMount are not included in these presets. Upstream-health includes
+combined SUSFS/NoMount driver object smoke builds on representative SM7550,
+SM8450, SM8550 crDroid, and SM8650 sources. Full kernel compilation and device
+boot still need validation before these presets can be considered stable.
+
+BakaSU (formerly ReSukiSU) is fetched from
+[`Baka-SU/BakaSU`](https://github.com/Baka-SU/BakaSU) at an exact commit (resolved from `main` without SUSFS, or pinned for SUSFS).
+Legacy ReSukiSU preset inputs remain accepted and resolve to the matching
+BakaSU integration; package names and provenance use `BakaSU`.
 
 Selecting `Build all 3 featured SUSFS variants (batch)` starts a three-entry
 matrix in which all three SUSFS integrations also include NoMount. Selecting
 `Build all 3 ZeroMount variants (batch)` instead builds `SukiSU Ultra + SUSFS +
-ZeroMount + KPM`, `ReSukiSU + SUSFS + ZeroMount`, and
+ZeroMount + KPM`, `BakaSU + SUSFS + ZeroMount`, and
 `KernelSU-Next + SUSFS + ZeroMount`.
 Each entry keeps its own package and diagnostics artifact; release mode publishes
 all three builds under the same immutable release tag.
+With Android 16 + 17 batch mode, the same root matrix runs once per Android
+version and publishes all six builds under that tag.
 
 KPM is available only through the dedicated SukiSU Ultra presets because current
-ReSukiSU no longer supports it. The pipeline resolves SukiSU Ultra to an exact
+BakaSU no longer supports it. The pipeline resolves SukiSU Ultra to an exact
 `main` commit for KPM-only builds, checks its KPM sources and Kbuild wiring,
 and enables `CONFIG_KPM`, `CONFIG_KALLSYMS`, and `CONFIG_KALLSYMS_ALL`.
 The SUSFS presets pin SukiSU Ultra to
 `7fbbb1f12e2410b69c8ebf958be84f165b8d0c93`, which passed a full
-SUSFS/NoMount/KPM build, and resolve the matching SUSFS
-branch at an exact commit. Newer SukiSU `main` revisions changed the hook ABI
+SUSFS/NoMount/KPM build, and use the matching SUSFS v2.3.0 pins described
+below. Newer SukiSU `main` revisions changed the hook ABI
 and require a new compatibility patch before this pin can be advanced. The four-feature
 preset also resolves NoMount at an exact commit and enables `CONFIG_KEYS` and
 `CONFIG_NOMOUNT`. Validation mode compiles the KPM, SUSFS, VFS, and NoMount
@@ -165,11 +247,58 @@ the signature checks against the final kernel artifacts. Both paths fail closed
 when expected wiring, config, objects, or symbols are missing. KPM resolver
 verification uses AOSP Clang's LTO-aware `llvm-nm` on the compiled resolver
 object instead of GNU `nm` on the aggregate LTO intermediate.
+Full KPM builds also inject the implementation into the final `Image` with
+SukiSU KernelPatch **0.13.9**. Both `kptools-linux` and `kpimg` are SHA-256
+pinned. The build requires a changed Image and `patched=true` from the image
+inspector; packaging checks the resulting Image hash against
+`kpm-image-proof.txt`. `CONFIG_KPM=y` and loader symbols alone only establish
+the hook stubs, not a working KPM implementation. Validation-only builds do
+not perform this final Image injection.
 
-ReSukiSU SUSFS presets pin `fa8311f632a215b5381ec644627c6198d1e8a13e`,
+BakaSU SUSFS presets pin `fa8311f632a215b5381ec644627c6198d1e8a13e`,
 which passed a full batch build on September 27. Its latest `main` suspends
 SUSFS builds pending upstream SELinux hook updates; this pin must be revisited
-when those updates land. ReSukiSU without SUSFS continues to follow `main`.
+when those updates land. BakaSU without SUSFS continues to follow `main`.
+BakaSU SUSFS presets also pin the matching SUSFS v2.3.0 revision for each GKI
+branch, using the same su-session ABI map as SukiSU Ultra. These pins include
+upstream fixes through September 15, 2026 for the enabled-features NULL
+dereference, CTIME spoof bit, and `super.c` declaration placement. The version
+string remains v2.3.0. Following the latest SUSFS branch with this older driver
+can introduce undefined preinit and SELinux
+hook symbols at the final kernel link.
+
+The pinned drivers originally exposed UAPI 4, which causes `Kernel update
+required` with BakaSU UAPI 5 and SukiSU UAPI 6 managers even when the kernel
+build succeeds. The pipeline now backports the actual interfaces:
+
+- BakaSU SUSFS: UAPI **5**, including the service-stage start/skip result and
+  reset for an emulated soft reboot, from upstream commit `8770c7e3`.
+- SukiSU SUSFS: UAPI **6**, including the same service-stage handling,
+  root-only batch symbol lookup, and `/metadata/vold/ksu/modules.rc` support,
+  from upstream commits `7ef2dbb7` and `3b607917`. The optional preinit runner
+  is disabled and its capability flag stays clear. The older KPM interfaces
+  are retained. The extension-hub ioctl also bridges KPM discovery/control and
+  SuSFS discovery to the pinned implementations. CPU spoof, umount paths, and
+  dynamic-manager hub operations remain unsupported by this bridge.
+
+Backports apply only to the exact tested driver commits; unknown patch drift
+fails the build. `build-info.json` and release notes record the resulting UAPI
+and patch SHA-256. The pinned BakaSU driver's full name can still contain
+ReSukiSU; its interface suffix should now be `/5`. SukiSU should show UAPI 6.
+Older downloaded ZIPs still contain UAPI 4 and must be replaced by a new build;
+updating the manager alone does not update an embedded kernel driver.
+Device boot, root grants, and module installation require device testing after
+flashing the device/ROM-matched package.
+
+If the home screen reports SuSFS v2.3.0 but the **Extension features** page
+reports no support, the running driver may have UAPI 6 without the extension
+hub bridge. For example, release `kernel-build-39906179867-1` contains this
+older backport and an unpatched KPM Image. Rebuild with the updated pipeline
+and flash the device/ROM-matched ZIP, then reboot. Updating the manager or
+reinstalling modules cannot add these kernel interfaces. Current managers
+also perform live KPM-version and SuSFS-version probes before displaying
+support; the bridge does not override those checks.
+
 Patch/config validation uses the runner's distribution Clang, LLD, and LLVM
 binutils; full builds use the selected pinned AOSP toolchain.
 
@@ -195,7 +324,7 @@ because the SUSFS KernelSU-side patch does not apply to the current official
 development tree; the pipeline still takes the kernel-side SUSFS files and
 patch from `simonpunk/susfs4ksu` at an exact commit.
 
-SUSFS builds require upstream v2.2.0 or newer and explicitly verify the
+SUSFS builds require upstream v2.3.0 or newer and explicitly verify the
 `SUS_MAP` and `OPEN_REDIRECT` features in the final config. The NoMount presets
 integrate the exact resolved `master` commit, enable `CONFIG_NOMOUNT=y`, and
 checks both source wiring and final kernel signatures. NoMount hooks VFS
@@ -219,6 +348,12 @@ Manually selected branch names are validated with Git before they are written
 to GitHub Actions environment files. Every kernel, modules, root implementation,
 SUSFS, NoMount, ZeroMount patches, and AnyKernel input are resolved to exact
 commits before cloning.
+
+The manual branch menu is shared across sources: selecting LineageOS does not
+make branches such as `seventeen` or crDroid's `17.0` valid for that repository.
+Use automatic branch selection, or select an existing `lineage-*` branch that
+matches the installed ROM. Missing branches fail immediately with a source URL
+and a selection hint, before optional root or patch dependencies are queried.
 
 ## Build performance
 
@@ -250,7 +385,10 @@ Android version checking is also enabled when the selected branch identifies a
 known Android generation. The installer targets the current active `boot`
 partition by name, refuses to continue unless the resolved `boot_a`/`boot_b`
 path matches that slot, splits and rebuilds the boot image without unpacking
-its ramdisk, and replaces only the kernel Image. This supports newer devices such as OnePlus 11,
+its ramdisk, and replaces only the kernel Image. Slot detection uses the boot
+properties, `/proc/cmdline`, and `/proc/bootconfig`, supporting recoveries that
+do not publish `ro.boot.slot_suffix`. Missing or invalid slot metadata still
+aborts installation without writing a partition. This supports newer devices such as OnePlus 11,
 where the first-stage ramdisk lives in `init_boot` and `boot` legitimately has
 no ramdisk, while preserving a boot ramdisk when one is present. Upstream
 AnyKernel example-device paths and demo ramdisk edits are not included. KPM
@@ -300,6 +438,10 @@ holding the build runner indefinitely.
 All third-party GitHub Actions are pinned to full commit hashes. AOSP Clang
 archive URLs are pinned to exact Gitiles commits, and changing the downloader
 invalidates the toolchain cache.
+The downloader validates gzip integrity, archive extraction, and required tools
+before installing the toolchain. Truncated HTTP-success responses trigger a
+fresh download, with at most five attempts; partial extractions cannot become
+the cached toolchain.
 
 ## Validation and upstream health
 
@@ -314,17 +456,18 @@ Pushes and pull requests run:
 - actionlint for all workflow files
 
 `Check upstream health` runs every Monday and can also be started manually. It
-resolves exact commits for all twelve profiles, then runs a twenty-nine-job
+resolves exact commits for all twelve profiles, then runs a thirty-job
 smoke-test matrix: KernelSU-Next + SUSFS + NoMount, SukiSU Ultra + SUSFS +
 NoMount + KPM
 (including the crDroid OnePlus 12 / Android 6.1 vendor include drift),
-and ReSukiSU + SUSFS + NoMount are validated on representative SM7550 (including
+and BakaSU + SUSFS + NoMount are validated on representative SM7550 (including
 both CE4 source families), SM8450, SM8550 (including crDroid), and SM8650
 sources, with an additional
 baseline validation for the LunarisOS OnePlus 11 and crDroid OnePlus 12 sources.
 The SukiSU Ultra ZeroMount preset is validated across the representative
-5.10, 5.15, and 6.1 source families; the KernelSU-Next and ReSukiSU ZeroMount
+5.10, 5.15, and 6.1 source families; the KernelSU-Next and BakaSU ZeroMount
 presets additionally run against the representative SM8550 LineageOS source.
+BakaSU ZeroMount also runs against the SM8550 crDroid source.
 
 ## Important limitations
 

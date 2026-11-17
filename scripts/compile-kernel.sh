@@ -11,6 +11,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/kernel-helpers.sh"
 # shellcheck source=lib/ksu-setup.sh
 . "${SCRIPT_DIR}/lib/ksu-setup.sh"
+# shellcheck source=lib/finasu-manager.sh
+. "${SCRIPT_DIR}/lib/finasu-manager.sh"
+# shellcheck source=lib/finasu-integration.sh
+. "${SCRIPT_DIR}/lib/finasu-integration.sh"
+# shellcheck source=lib/ksu-uapi.sh
+. "${SCRIPT_DIR}/lib/ksu-uapi.sh"
+# shellcheck source=lib/kpm-image.sh
+. "${SCRIPT_DIR}/lib/kpm-image.sh"
 # shellcheck source=lib/susfs-apply.sh
 . "${SCRIPT_DIR}/lib/susfs-apply.sh"
 # shellcheck source=lib/nomount-setup.sh
@@ -126,6 +134,8 @@ if [[ -n "$KERNEL_MAKE_FLAGS" ]]; then
   echo "[config] Device make flags: ${KERNEL_MAKE_FLAG_ARRAY[*]}"
 fi
 
+configure_finasu_manager
+
 ccache --zero-stats || true
 CONFIG_STARTED_AT="$(date +%s)"
 BUILD_PHASE="source integration"
@@ -136,6 +146,10 @@ EXTRACT_CERT_SOURCE="$(detect_extract_cert_source)" || {
 }
 repair_extract_cert_key_pass_guard "$EXTRACT_CERT_SOURCE"
 install_ksu_variant "${KSU_TYPE}"
+apply_finasu_compat
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
+  python3 "${SCRIPT_DIR}/tests/finasu-manager-test.py" "$KSU_KERNEL_DIR"
+fi
 
 if [[ "$KSU_TYPE" == *KPM* ]]; then
   verify_kpm_source_integration "${KSU_KERNEL_DIR}"
@@ -149,6 +163,8 @@ if [[ "$KSU_TYPE" == *susfs* ]]; then
   verify_susfs_source_integration "${KSU_KERNEL_DIR}"
 fi
 
+apply_ksu_uapi_backports
+
 if [[ "$KSU_TYPE" == *zeromount* ]]; then
   : "${ZEROMOUNT_REPO:?}"
   : "${ZEROMOUNT_COMMIT:?}"
@@ -161,7 +177,11 @@ if [[ "$KSU_TYPE" == *nomount* ]]; then
   : "${NOMOUNT_REPO:?}"
   : "${NOMOUNT_REF:?}"
   : "${NOMOUNT_COMMIT:?}"
-  install_nomount "$NOMOUNT_REPO" "$NOMOUNT_REF" "$NOMOUNT_COMMIT"
+  if [[ "$KSU_TYPE" == FinaSU* ]]; then
+    install_finasu_nomount
+  else
+    install_nomount "$NOMOUNT_REPO" "$NOMOUNT_REF" "$NOMOUNT_COMMIT"
+  fi
   verify_nomount_source_integration
 fi
 
@@ -199,6 +219,30 @@ fi
 
 if [[ "$KSU_TYPE" != "None" ]]; then
   require_config_enabled out/.config CONFIG_KSU
+fi
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
+  for key in CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_KSU_DYNAMIC_MANAGER CONFIG_HEADERS_INSTALL; do
+    require_config_enabled out/.config "$key"
+  done
+  for key in CONFIG_KSU_DISABLE_MANAGER CONFIG_KSU_DISABLE_POLICY CONFIG_KSU_DEBUG; do
+    require_config_disabled out/.config "$key"
+  done
+  if [[ "$KSU_TYPE" == *susfs* ]]; then
+    require_config_enabled out/.config CONFIG_THREAD_INFO_IN_TASK
+    require_config_enabled out/.config CONFIG_KSU_HOOK_SUSFS_INLINE
+    require_config_disabled out/.config CONFIG_KSU_HOOK_TRACEPOINT
+    sh "$KSU_KERNEL_DIR/tools/check_susfs_inline.sh" .
+  else
+    require_config_enabled out/.config CONFIG_HAVE_SYSCALL_TRACEPOINTS
+    require_config_enabled out/.config CONFIG_KSU_HOOK_TRACEPOINT
+    require_config_disabled out/.config CONFIG_KSU_SUSFS
+    require_config_disabled out/.config CONFIG_KSU_HOOK_SUSFS_INLINE
+  fi
+  # Driver-only smoke targets do not necessarily prepare UAPI headers. Install
+  # them first, then make missing preinit support fatal for every compile.
+  make "${MAKE_ARGS[@]}" headers_install
+  test -s out/usr/include/linux/unistd.h
+  MAKE_ARGS+=(KSU_REQUIRE_PREINIT=1)
 fi
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   require_config_enabled  out/.config CONFIG_KSU_SUSFS
@@ -242,14 +286,21 @@ if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
   COMPILE_SECONDS=$(($(date +%s) - COMPILE_STARTED_AT))
 
   SMOKE_TARGETS=()
+  if [[ "$KSU_TYPE" == FinaSU* && "$KSU_TYPE" != *susfs* ]]; then
+    SMOKE_TARGETS+=("${KSU_DRIVER_DIR}/kernelsu/")
+  fi
   if [[ "$KSU_TYPE" == *susfs* ]]; then
     SMOKE_TARGETS+=(
       fs/susfs.o
+      fs/exec.o
       fs/namespace.o
       fs/proc/task_mmu.o
       kernel/reboot.o
       "${KSU_DRIVER_DIR}/kernelsu/"
     )
+    if [[ "$KSU_TYPE" == FinaSU* ]]; then
+      SMOKE_TARGETS+=(fs/open.o fs/read_write.o fs/stat.o kernel/sys.o "${KSU_DRIVER_DIR}/input/input.o")
+    fi
   fi
   if [[ "$KSU_TYPE" == *nomount* ]]; then
     SMOKE_TARGETS+=("${NOMOUNT_FS_DIR}/nomount/nomount.o")
@@ -286,12 +337,16 @@ if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
     fi
     if ! make -j"$(nproc)" "${MAKE_ARGS[@]}" "${SMOKE_TARGETS[@]}" 2>&1 | tee integration-smoke.log; then
       COMPILE_SECONDS=$((COMPILE_SECONDS + $(date +%s) - COMPILE_STARTED_AT))
-      echo "::error::SUSFS/NoMount/ZeroMount/KPM integration object smoke compile failed."
+      echo "::error::KernelSU/SUSFS/NoMount/ZeroMount/KPM integration object smoke compile failed."
       exit 1
     fi
     COMPILE_SECONDS=$((COMPILE_SECONDS + $(date +%s) - COMPILE_STARTED_AT))
     if [[ "$KSU_TYPE" == *susfs* ]]; then
+      verify_susfs_hook_linkage
       verify_susfs_binary_presence
+    fi
+    if [[ "$KSU_TYPE" == FinaSU* ]]; then
+      verify_finasu_preinit_binary . finasu-preinit-proof.txt
     fi
     if [[ "$KSU_TYPE" == *nomount* ]]; then
       verify_nomount_binary_presence
@@ -345,11 +400,15 @@ if ! strings out/arch/arm64/boot/Image | grep -F "Linux version ${KERNEL_RELEASE
   exit 1
 fi
 echo "[+] Kernel release identity verified: ${KERNEL_RELEASE}"
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
+  verify_finasu_manager_binary out/arch/arm64/boot/Image finasu-manager-proof.txt
+  verify_finasu_preinit_binary . finasu-preinit-proof.txt out/arch/arm64/boot/Image
+fi
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   echo "==== SUSFS CONFIG SNAPSHOT ===="
   grep -E '^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_TMPFS_XATTR=|^CONFIG_NOMOUNT=' out/.config || true
-  if [[ "$KSU_TYPE" == ReSukiSU* ]]; then
-    verify_resukisu_susfs_hook_mode
+  if [[ "$KSU_TYPE" == BakaSU* ]]; then
+    verify_bakasu_susfs_hook_mode
   fi
   verify_susfs_binary_presence
 fi
@@ -365,6 +424,7 @@ if [[ "$KSU_TYPE" == *KPM* ]]; then
   echo "==== KPM CONFIG SNAPSHOT ===="
   grep -E '^CONFIG_KPM=|^CONFIG_KALLSYMS(_ALL)?=' out/.config || true
   verify_kpm_binary_presence
+  patch_kpm_image out/arch/arm64/boot/Image kpm-image-proof.txt
 fi
 
 ccache --show-stats || true

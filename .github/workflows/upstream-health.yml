@@ -36,7 +36,7 @@ jobs:
       matrix:
         integration:
           - KernelSU-Next + SUSFS + NoMount (experimental)
-          - ReSukiSU + SUSFS + NoMount (experimental)
+          - BakaSU + SUSFS + NoMount (experimental)
           - SukiSU Ultra + SUSFS + NoMount + KPM (experimental)
           - SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)
         profile:
@@ -47,10 +47,30 @@ jobs:
           - SM8550 | OnePlus 11 / 12R | crDroid
           - SM8650 | OnePlus 12 | LineageOS (recommended)
         include:
+          - integration: FinaSU + SUSFS + NoMount (experimental)
+            profile: SM7550 | OnePlus Nord CE4 | development
+          - integration: FinaSU + SUSFS + NoMount (experimental)
+            profile: SM8450 | OnePlus 10T / Ace Pro | LineageOS community
+          - integration: FinaSU + SUSFS + NoMount (experimental)
+            profile: SM8550 | OnePlus 11 / 12R | crDroid
+          - integration: FinaSU + SUSFS + NoMount (experimental)
+            profile: SM8650 | OnePlus 12 | LineageOS (recommended)
+          - integration: FinaSU (experimental)
+            profile: SM7550 | OnePlus Nord CE4 | development
+          - integration: FinaSU (experimental)
+            profile: SM8550 | OnePlus 11 / 12R | crDroid
+          - integration: FinaSU (experimental)
+            profile: SM8450 | OnePlus 10T / Ace Pro | LineageOS community
+          - integration: FinaSU (experimental)
+            profile: SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
+          - integration: FinaSU (experimental)
+            profile: SM8650 | OnePlus 12 | LineageOS (recommended)
           - integration: KernelSU-Next + SUSFS + ZeroMount (experimental)
             profile: SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
-          - integration: ReSukiSU + SUSFS + ZeroMount (experimental)
+          - integration: BakaSU + SUSFS + ZeroMount (experimental)
             profile: SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
+          - integration: BakaSU + SUSFS + ZeroMount (experimental)
+            profile: SM8550 | OnePlus 11 / 12R | crDroid
           - integration: No root changes
             profile: SM8550 | OnePlus 11 | LunarisOS
           - integration: No root changes
@@ -92,7 +112,8 @@ jobs:
             libssl-dev \
             lld \
             llvm \
-            patch
+            patch \
+            rsync
 
       - name: Apply integrations and validate config
         run: bash scripts/compile-kernel.sh

@@ -44,6 +44,8 @@ append_file_block() {
   echo "- Device codenames: ${DEVICE_CODENAMES:-unknown}"
   echo "- Accepted device IDs: ${DEVICE_NAMES:-unknown}"
   echo "- Branch: ${KERNEL_BRANCH}"
+  echo "- Android target: ${SUPPORTED_ANDROID_VERSIONS:-unknown}"
+  echo "- Android 16/17 batch: ${ANDROID_BATCH_BUILD:-0}"
   echo "- Kernel commit: \`${KERNEL_COMMIT}\`"
   echo "- Modules branch: ${MODULES_BRANCH}"
   echo "- Modules commit: \`${MODULES_COMMIT}\`"
@@ -53,6 +55,8 @@ append_file_block() {
     echo "- KernelSU repository: ${KSU_REPO:-unknown}"
     echo "- KernelSU ref: ${KSU_REF:-unknown}"
     echo "- KernelSU commit: \`${KSU_COMMIT}\`"
+    echo "- KernelSU UAPI backport: ${KSU_UAPI_VERSION:-none}"
+    echo "- UAPI patch SHA-256: ${KSU_UAPI_PATCH_SHA256:-none}"
   fi
   if [[ -n "${SUSFS_REF:-}" ]]; then
     echo "- susfs ref: ${SUSFS_REF}"
@@ -79,6 +83,8 @@ append_file_block() {
     echo
   fi
 
+  append_file_block "finasu-manager-proof.txt" "${SOC}/finasu-manager-proof.txt"
+  append_file_block "finasu-preinit-proof.txt" "${SOC}/finasu-preinit-proof.txt"
   append_file_block "susfs-source-proof.txt" "${SOC}/susfs-source-proof.txt"
   append_file_block "susfs-hook-proof.txt"   "${SOC}/susfs-hook-proof.txt"
   append_file_block "susfs-proof.txt"        "${SOC}/susfs-proof.txt"
@@ -88,4 +94,5 @@ append_file_block() {
   append_file_block "zeromount-proof.txt"        "${SOC}/zeromount-proof.txt"
   append_file_block "kpm-source-proof.txt"     "${SOC}/kpm-source-proof.txt"
   append_file_block "kpm-proof.txt"            "${SOC}/kpm-proof.txt"
+  append_file_block "kpm-image-proof.txt"      "${SOC}/kpm-image-proof.txt"
 } >> "$GITHUB_STEP_SUMMARY"

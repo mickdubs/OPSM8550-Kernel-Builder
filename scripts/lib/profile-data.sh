@@ -243,14 +243,19 @@ resolve_root_solution() {
     "KernelSU-Next + SUSFS + NoMount (experimental)") KSU_TYPE="KernelSU-Next-with-susfs-nomount" ;;
     "KernelSU-Next + SUSFS + ZeroMount (experimental)") KSU_TYPE="KernelSU-Next-with-susfs-zeromount" ;;
     "KowSU") KSU_TYPE="KowSU" ;;
+    "FinaSU (experimental)") KSU_TYPE="FinaSU" ;;
+    "FinaSU + SUSFS (experimental)") KSU_TYPE="FinaSU-with-susfs" ;;
+    "FinaSU + NoMount (experimental)") KSU_TYPE="FinaSU-with-nomount" ;;
+    "FinaSU + SUSFS + NoMount (experimental)") KSU_TYPE="FinaSU-with-susfs-nomount" ;;
     "SukiSU Ultra + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-KPM" ;;
     "SukiSU Ultra + SUSFS + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-KPM" ;;
     "SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-zeromount-KPM" ;;
     "SukiSU Ultra + SUSFS + NoMount + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-nomount-KPM" ;;
-    "ReSukiSU") KSU_TYPE="ReSukiSU" ;;
-    "ReSukiSU + susfs") KSU_TYPE="ReSukiSU-with-susfs" ;;
-    "ReSukiSU + SUSFS + ZeroMount (experimental)") KSU_TYPE="ReSukiSU-with-susfs-zeromount" ;;
-    "ReSukiSU + SUSFS + NoMount (experimental)") KSU_TYPE="ReSukiSU-with-susfs-nomount" ;;
+    # Keep existing workflow_dispatch clients working after the upstream rename.
+    "BakaSU"|"ReSukiSU") KSU_TYPE="BakaSU" ;;
+    "BakaSU + SUSFS"|"ReSukiSU + susfs") KSU_TYPE="BakaSU-with-susfs" ;;
+    "BakaSU + SUSFS + ZeroMount (experimental)"|"ReSukiSU + SUSFS + ZeroMount (experimental)") KSU_TYPE="BakaSU-with-susfs-zeromount" ;;
+    "BakaSU + SUSFS + NoMount (experimental)"|"ReSukiSU + SUSFS + NoMount (experimental)") KSU_TYPE="BakaSU-with-susfs-nomount" ;;
     *)
       echo "::error::Unsupported root solution: $1"
       return 1
@@ -327,19 +332,24 @@ resolve_susfs_settings() {
   SUSFS_PATCH_FILE="50_add_susfs_in_${SUSFS_REF}.patch"
 }
 
-sukisu_compatible_susfs_commit() {
+su_session_compatible_susfs_commit() {
   local susfs_ref="$1"
 
   # Keep every kernel branch pinned to a SUSFS v2.3.0 revision whose KernelSU
-  # patch matches the su-session fd ABI introduced by SukiSU Ultra 86e9b3b.
+  # patch matches the su-session fd ABI in the pinned SukiSU Ultra and BakaSU
+  # drivers. Newer patches require preinit and external SELinux hooks that
+  # these driver revisions do not export.
+  # Updated through 2026-09-15: includes the enabled-features NULL-deref fix,
+  # corrected CTIME spoof bit, and super.c declaration compatibility fix.
+  # Later upstream revisions change the KernelSU patch and need a new adapter.
   # The revisions share that KernelSU patch but retain branch-specific patches.
   case "$susfs_ref" in
-    gki-android13-5.10) echo "2c774fdb4f0aaa743598c1bec787f6c935574ed1" ;;
-    gki-android13-5.15) echo "7af04b08f86a5f811cbea28805f96d52368e005f" ;;
-    gki-android14-5.15) echo "aab99ba7693d94489fd32f1cc4c9d58396fffeee" ;;
-    gki-android14-6.1) echo "6c2b5042ec656cd3ce9ad352a1e226e2e9e26779" ;;
+    gki-android13-5.10) echo "7b08b969e3577d282b352a267cb343b02b707d2a" ;;
+    gki-android13-5.15) echo "adaef1c599e770707311ad36b015a0de3f30ac28" ;;
+    gki-android14-5.15) echo "ffa69590787d097f54cb60ed79fa6fd5e285bb41" ;;
+    gki-android14-6.1) echo "2e9f720d3af25e2c6678633cc5be82edae9708b3" ;;
     *)
-      echo "::error::No SukiSU-compatible SUSFS commit is pinned for $susfs_ref" >&2
+      echo "::error::No su-session-compatible SUSFS commit is pinned for $susfs_ref" >&2
       return 1
       ;;
   esac
